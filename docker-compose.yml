@@ -1,0 +1,67 @@
+version: "3.8"
+
+services:
+  # Multi-tenant Relational Database (PostgreSQL 15)
+  db:
+    image: postgres:15-alpine
+    container_name: inkloom_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-inkloom_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-inkloom_dev_pw}
+      POSTGRES_DB: ${POSTGRES_DB:-inkloom_ai}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-inkloom_user} -d ${POSTGRES_DB:-inkloom_ai}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # FastAPI Backend Service (Deterministic Brand Engine & API)
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: inkloom_backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-inkloom_user}:${POSTGRES_PASSWORD:-inkloom_dev_pw}@db:5432/${POSTGRES_DB:-inkloom_ai}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      DEBUG: ${DEBUG:-false}
+      AI_ENGINE_MODE: deterministic
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Next.js Frontend Service (Multi-stage Production Standalone)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api/v1}
+        NEXT_PUBLIC_USE_MOCK: ${NEXT_PUBLIC_USE_MOCK:-false}
+    container_name: inkloom_frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api/v1}
+      PORT: 3000
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
